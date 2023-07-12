@@ -1,0 +1,494 @@
+---
+title: "STATS485 Unit 1 Paper Appendix"
+author: "Brendan Bebb"
+date: "2023-01-14"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+# External Requirements 
+library(knitr)
+library(dplyr)
+library(magrittr)
+library(parallel)
+library(parallelly)
+library(stats)
+mobility = read.csv("http://dept.stat.lsa.umich.edu/~bbh/s485/data/mobility1.csv")
+americannationsdata = read.csv("https://tinyurl.com/yb65jsq2")
+```
+
+### Overview and Goals
+The purpose of this appendix is to highlight and construct confidence intervals
+for a dataset of commuting zones and their respective citizens. The data contains
+a sampling of teenage kids and their current economic status at that time, and then
+compares that to their economic status about ten years later. From this information,
+a proportion is calculated to show those individuals who move from the lower quintile
+at ages 16-18 to the upper quintile of economic status at age 30.
+
+Given the sample size and the desire to capture the true population proportion of
+citizens that move from the lowest quintile to the highest quintile, I believe
+the Jeffreys' Interval is the best interval to use to find the true population
+proportion of individuals with the greatest economic mobility since we are dealing
+with such a small p and a large n. Below I will replicate Jeffreys' Interval,
+and then modify it based on Brown, Cai, and Disgupta's recommendations to enhance it.
+
+### Computations and Calculations
+
+First, it is necessary to add a column to the dataset to show the number of people
+that were sampled who moved from the lower to the upper quintile.
+
+```{r}
+mobility$n_upmovers = mobility$n_lowstart * mobility$phat_upmover
+```
+
+Next, a Jeffrey's Interval function is implemented to get both the upper and lower
+bounds of the intveral.
+
+```{r}
+# lower bound
+JeffreysInterval_lower = function(n, k, phat) {
+  x = phat * n
+  alpha = (1 - k)/ 2
+  kappa = qnorm(1 - alpha)
+  w_t1 = ((kappa * sqrt(4 *  phat * (1 - phat)) / n) + ((kappa^2 - 3) / (6 * n^2))) / (4 * phat * (1 - phat))
+  w_t2 = ((0.5 - phat) * (phat * (1-phat) * (kappa^2 + 2) - (1/n))) / (6 * n * (phat * (1-phat))^2)
+  w = w_t1 + w_t2
+  if (phat == 0) {
+    lowerbound = 0
+  }
+  else if (phat == 1) {
+    lowerbound = (x + 0.5) / (n + 1)
+  }
+  else {
+    lowerbound = (x + 0.5) / (n + 1 +(n - x + 0.5) * (exp(2*w) - 1))
+  }
+  return(lowerbound)
+}
+
+# upper bound
+JeffreysInterval_upper = function(n, k, phat) {
+  x = phat * n
+  alpha = (1 - k)/ 2
+  kappa = 0 - qnorm(1 - alpha)
+  w_t1 = ((kappa * sqrt(4 *  phat * (1 - phat)) / n) + (kappa^2 - 3) / (6 * n^2)) / (4 * phat * (1 - phat))
+  w_t2 = ((0.5 - phat) * (phat * (1-phat) * (kappa^2 + 2) - (1/n))) / (6 * n * ((phat * (1-phat))^2))
+  w = w_t1 + w_t2
+  if (phat == 0) {
+    upperbound = (x + 0.5) / (n + 1)
+  }
+  else if (phat == 1) {
+    upperbound = 1
+  }
+  else {
+    upperbound = (x + 0.5) / (n + 1 +(n - x + 0.5) * (exp(2*w) - 1))
+  }
+  return(upperbound)
+}
+
+JeffreysInterval = function(n, k, phat) {
+  interval = c()
+  interval[1] = JeffreysInterval_lower(n, k, phat)
+  interval[2] = JeffreysInterval_upper(n, k, phat)
+  return(interval)
+}
+```
+
+Below are test cases carrying out the Jeffreys' Interval.
+
+```{r}
+test1 = JeffreysInterval(30, .95, .1)
+test1
+test2 = JeffreysInterval(30, .95, 0)
+test2
+test3 = JeffreysInterval(30, .95, 1)
+test3
+test4 = JeffreysInterval(30, .75, .41)
+test4
+test4 = JeffreysInterval(100, .75, .41)
+test4
+test5 = JeffreysInterval(10, .95, .99)
+test5
+```
+
+The upper and lower bounds of a 95% Jeffreys' Interval are added to each commuting
+zone for easier reference.
+
+```{r}
+mobility$lowerbound = 0
+mobility$upperbound = 0
+for (i in 1:40) {
+  mobility[i,9] = JeffreysInterval_lower(mobility[i,6], 0.95, mobility[i,7])
+  mobility[i,10] = JeffreysInterval_upper(mobility[i,6], 0.95, mobility[i,7])
+}
+```
+
+Each regions' total populations are added together from their respective commuting
+zones to compute the overall region probability of mobility.
+
+```{r}
+sumN_west = 0
+lowstart_west = 0
+
+sumN_midwest = 0
+lowstart_midwest = 0
+
+sumN_northeast = 0
+lowstart_northeast = 0
+
+sumN_south = 0
+lowstart_south = 0
+
+top_west = 0 
+top_midwest = 0 
+top_northeast = 0 
+top_south = 0 
+
+for (i in 1:10) {
+  sumN_west = sumN_west + mobility[i, 4]
+  top_west = top_west + (mobility[i,4] * mobility[i,7])
+  lowstart_west = lowstart_west + mobility[i,6]
+  
+  sumN_midwest = sumN_midwest + mobility[i + 10, 4]
+  top_midwest = top_midwest + (mobility[i + 10,4] * mobility[i + 10,7])
+  lowstart_midwest = lowstart_midwest + mobility[i+10,6]
+  
+  sumN_northeast = sumN_northeast + mobility[i + 20, 4]
+  top_northeast = top_northeast + (mobility[i + 20,4] * mobility[i + 20,7])
+  lowstart_northeast = lowstart_northeast + mobility[i + 20,6]
+  
+  sumN_south = sumN_south + mobility[i + 30, 4]
+  top_south = top_south + (mobility[i + 30,4] * mobility[i + 30,7])
+  lowstart_south = lowstart_south + mobility[i + 30,6]
+}
+```
+
+The probabilities for each region are as follows: 
+
+```{r}
+phat_west = top_west / sumN_west
+phat_west
+
+phat_midwest = top_midwest / sumN_midwest
+phat_midwest
+
+phat_northeast = top_northeast / sumN_northeast
+phat_northeast
+
+phat_south = top_south / sumN_south
+phat_south
+```
+
+The intervals for each region are then calculated for a stronger visualization
+of the population proportions.
+
+```{r}
+westCI = JeffreysInterval(lowstart_west, 0.95, phat_west)
+westCI
+
+midwestCI = JeffreysInterval(lowstart_midwest, 0.95, phat_midwest)
+midwestCI
+
+northeastCI = JeffreysInterval(lowstart_northeast, 0.95, phat_northeast)
+northeastCI
+
+southCI = JeffreysInterval(lowstart_south, 0.95, phat_south)
+southCI
+```
+
+Nations are then assigned to each commuting zone based off of Woodward's New
+York Times article. These are added in another column to each commuting zone.
+
+```{r}
+mobility$nation = NA
+for (i in 1:40) {
+  for (j in 1:278) {
+    if(mobility[i, 1] == americannationsdata[j,1]) {
+      if(mobility[i,2] == americannationsdata[j,2]) {
+        mobility[i,11] = americannationsdata[j,4]
+      }
+    }
+  }
+}
+
+
+# add in other nations not found in americannations dataset
+mobility[2,11] = "Far West"
+mobility[3,11] = "Far West"
+mobility[4,11] = "El Norte"
+mobility[10,11] = "Left Coast"
+mobility[31,11] = "New France"
+mobility[32,11] = "New France"
+mobility[37, 11] = "Greater Appalachia"
+mobility[38,11] = "El Norte"
+mobility[39,11] = "Greater Appalachia"
+```
+
+Below is a preview of the commuting zones in descending order of highest to lowest
+mobility probabilities.
+
+```{r}
+sorted = mobility[order(-mobility$phat_upmover),]
+head(sorted)
+```
+
+As done above for the regions, the overall populations for each nation are added 
+together to find each nation's probability of mobility.
+
+```{r}
+sumN_deepsouth = 0
+lowstart_deepsouth = 0
+top_deepsouth = 0
+
+sumN_elnorte = 0
+lowstart_elnorte = 0
+top_elnorte = 0
+
+sumN_farwest = 0
+lowstart_farwest = 0
+top_farwest = 0
+
+sumN_greatapp = 0
+lowstart_greatapp = 0
+top_deepsouth = 0
+
+sumN_greatapp = 0
+lowstart_greatapp = 0
+top_greatapp = 0
+
+sumN_leftcoast = 0
+lowstart_leftcoast = 0
+top_leftcoast = 0
+
+sumN_midlands = 0
+lowstart_midlands = 0
+top_midlands = 0
+
+sumN_newfrance = 0
+lowstart_newfrance = 0
+top_newfrance = 0
+
+sumN_newnet = 0
+lowstart_newnet = 0
+top_newnet = 0
+
+sumN_yankee = 0
+lowstart_yankee = 0
+top_yankee = 0
+
+
+
+for (i in 1:40) {
+  if (mobility[i, 11] == "Deep South") {
+    sumN_deepsouth = sumN_deepsouth + mobility[i, 4]
+    top_deepsouth = top_deepsouth + (mobility[i,4] * mobility[i,7])
+    lowstart_deepsouth = lowstart_deepsouth + mobility[i,6]
+  }
+  else if (mobility[i, 11] == "El Norte") {
+    sumN_elnorte = sumN_elnorte + mobility[i, 4]
+    top_elnorte = top_elnorte + (mobility[i,4] * mobility[i,7])
+    lowstart_elnorte = lowstart_elnorte + mobility[i,6]
+  }
+  else if (mobility[i, 11] == "Far West") {
+    sumN_farwest = sumN_farwest + mobility[i, 4]
+    top_farwest = top_farwest + (mobility[i,4] * mobility[i,7])
+    lowstart_farwest = lowstart_farwest + mobility[i,6]
+  }
+  else if (mobility[i, 11] == "Greater Appalachia") {
+    sumN_greatapp = sumN_greatapp + mobility[i, 4]
+    top_greatapp = top_greatapp + (mobility[i,4] * mobility[i,7])
+    lowstart_greatapp = lowstart_greatapp + mobility[i,6]
+  }
+  else if (mobility[i, 11] == "Left Coast") {
+    sumN_leftcoast = sumN_leftcoast + mobility[i, 4]
+    top_leftcoast = top_leftcoast + (mobility[i,4] * mobility[i,7])
+    lowstart_leftcoast = lowstart_leftcoast + mobility[i,6]
+  }
+  else if (mobility[i, 11] == "Midlands") {
+    sumN_midlands = sumN_midlands + mobility[i, 4]
+    top_midlands = top_midlands + (mobility[i,4] * mobility[i,7])
+    lowstart_midlands = lowstart_midlands + mobility[i,6]
+  }
+  else if (mobility[i, 11] == "New France") {
+    sumN_newfrance = sumN_newfrance + mobility[i, 4]
+    top_newfrance = top_newfrance + (mobility[i,4] * mobility[i,7])
+    lowstart_newfrance = lowstart_newfrance + mobility[i,6]
+  }
+  else if (mobility[i, 11] == "New Netherland") {
+    sumN_newnet = sumN_newnet + mobility[i, 4]
+    top_newnet = top_newnet + (mobility[i,4] * mobility[i,7])
+    lowstart_newnet = lowstart_newnet + mobility[i,6]
+  }
+  else {
+    sumN_yankee = sumN_yankee + mobility[i, 4]
+    top_yankee = top_yankee + (mobility[i,4] * mobility[i,7])
+    lowstart_yankee = lowstart_yankee + mobility[i,6]
+  }
+}
+```
+
+The probabilities of mobility for each nation are as follows:
+
+```{r}
+phat_ds = top_deepsouth / sumN_deepsouth
+phat_ds
+
+phat_en = top_elnorte / sumN_elnorte
+phat_en
+
+phat_fw = top_farwest / sumN_farwest
+phat_fw
+
+phat_ga = top_greatapp / sumN_greatapp
+phat_ga
+
+phat_nn = top_newnet / sumN_newnet
+phat_nn
+
+phat_nf = top_newfrance / sumN_newfrance
+phat_nf
+
+phat_yank = top_yankee / sumN_yankee
+phat_yank
+
+phat_lc = top_leftcoast / sumN_leftcoast
+phat_lc
+
+phat_midland = top_midlands / sumN_midlands
+phat_midland
+```
+
+Below are Jeffreys' intervals for each nation.
+
+```{r}
+# confidence intervals for each nation
+
+dsCI = JeffreysInterval(lowstart_deepsouth, 0.95, phat_ds)
+dsCI
+
+enCI = JeffreysInterval(lowstart_elnorte, 0.95, phat_en)
+enCI
+
+fwCI = JeffreysInterval(lowstart_farwest, 0.95, phat_fw)
+fwCI
+
+gaCI = JeffreysInterval(lowstart_greatapp, 0.95, phat_ga)
+gaCI
+
+nnCI = JeffreysInterval(lowstart_newnet, 0.95, phat_nn)
+nnCI
+
+nfCI = JeffreysInterval(lowstart_newfrance, 0.95, phat_nf)
+nfCI
+
+lcCI = JeffreysInterval(lowstart_leftcoast, 0.95, phat_lc)
+lcCI
+
+midlandCI = JeffreysInterval(lowstart_midlands, 0.95, phat_midland)
+midlandCI
+
+yankCI = JeffreysInterval(lowstart_yankee, 0.95, phat_yank)
+yankCI
+```
+
+A potential alternative variable worth investigating to see if it has a potential
+impact on economic mobility is the population size of each commuting zone and
+assigning it to a population size "bracket". The brackets are as follows:
+
+Bracket Group | Population Range
+--------------|-----------------
+Bracket 1     | 0 - 50,000
+Bracket 2     | 50,001 - 100,000
+Bracket 3     | 100,001 - 150,000
+Bracket 4     | 150,001 - 200,000
+Bracket 5     | 200,001+
+
+```{r}
+mobility$bracket = NA
+for (i in 1:40) {
+  if (mobility[i, 4] <= 50000) {
+    mobility[i, 12] = 1
+  }
+  else if (mobility [i, 4] <= 100000) {
+    mobility[i, 12] = 2
+  }
+  else if (mobility [i, 4] <=150000) {
+    mobility[i, 12] = 3
+  }
+  else if (mobility [i, 4] <=200000) {
+    mobility[i, 12] = 4
+  }
+  else {
+    mobility[i, 12] = 5
+  }
+}
+```
+
+The probabilities of each of these brackets are then found by adding together the
+populations of each bracket, as previously done for the nation and region distribution.
+
+```{r}
+
+sumN1 = 0
+top1 = 0
+lowstart1 = 0
+sumN2 = 0
+top2 = 0
+lowstart2 = 0
+sumN3 = 0
+top3 = 0
+lowstart3 = 0
+sumN4 = 0
+top4 = 0
+lowstart4 = 0
+sumN5 = 0
+top5 = 0
+lowstart5 = 0
+
+for (i in 1:40) {
+  if (mobility[i, 12] == 1) {
+    sumN1 = sumN1 + mobility[i, 4]
+    top1 = top1 + (mobility[i,4] * mobility[i,7])
+    lowstart1 = lowstart1 + mobility[i,6]
+  }
+  else if (mobility[i, 12] == 2) {
+    sumN2 = sumN2 + mobility[i, 4]
+    top2 = top2 + (mobility[i,4] * mobility[i,7])
+    lowstart2 = lowstart2 + mobility[i,6]
+  }
+  else if (mobility[i, 12] == 3) {
+    sumN3 = sumN3 + mobility[i, 4]
+    top3 = top3 + (mobility[i,4] * mobility[i,7])
+    lowstart3 = lowstart3 + mobility[i,6]
+  }
+  else if (mobility[i, 12] == 4) {
+    sumN4 = sumN4 + mobility[i, 4]
+    top4 = top4 + (mobility[i,4] * mobility[i,7])
+    lowstart4 = lowstart4 + mobility[i,6]
+  }
+  else {
+    sumN5 = sumN5 + mobility[i, 4]
+    top5 = top5 + (mobility[i,4] * mobility[i,7])
+    lowstart5 = lowstart5 + mobility[i,6]
+  }
+}
+```
+
+The probability of economic mobility in each bracket are as follows:
+
+```{r}
+phat1 = top1 / sumN1
+phat1
+
+phat2 = top2 / sumN2
+phat2
+
+phat3 = top3 / sumN3
+phat3
+
+phat4 = top4 / sumN4
+phat4
+
+phat5 = top5 / sumN5
+phat5
+```
+
